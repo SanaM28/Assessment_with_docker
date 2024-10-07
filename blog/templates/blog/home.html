@@ -1,0 +1,215 @@
+{% extends 'blog/base.html' %}
+{% load static %}
+
+{% block content %}
+    <div class="col-sm-10">
+        <h3 class="my-5">Home page</h3>
+        
+        <!-- Blog posts container -->
+        <div id="post-list">
+            {% for post in posts %}
+                <div class="jumbotron jumbotron-fluid jumbo-color" id="post-{{ post.id }}">
+                    <div class="container">
+                        <h3 class="display-6 font-weight-bold">{{ post.title }}</h3>
+                        <p>{{ post.description }}</p>
+                        
+                        <!-- Link to toggle comment form -->
+                        {% if user.is_authenticated %}
+                        <a href="#" class="toggle-comment-form" data-post-id="{{ post.id }}">View/Add Comment</a>
+                        
+                        <!-- Comment Form (initially hidden) -->
+                        <div id="comment-form-container-{{ post.id }}" style="display: none;">
+                            <form id="comment-form-{{ post.id }}" class="comment-form" data-post-id="{{ post.id }}" data-user-id="{{ user.id }}">
+                                {% csrf_token %}
+                                <textarea name="content" rows="2" placeholder="Add a comment..."></textarea><br>
+                                <button type="submit">Add Comment</button>
+                            </form>
+                            <div id="comment-section-{{ post.id }}">
+                                <!-- Display last 3 comments initially -->
+                                {% for comment in post.comments.all|slice:":3" %}
+                                    <div class="comment">
+                                        <strong>{{ comment.user }}</strong>: {{ comment.content }}<br>
+                                        <small>{{ comment.timestamp }}</small>
+                                    </div>
+                                {% empty %}
+                                    <p>No comments yet.</p>
+                                {% endfor %}
+                                
+                                <!-- Show all comments link -->
+                                {% if post.comments.count > 3 %}
+                                <a href="#" class="show-all-comments" data-post-id="{{ post.id }}">Show All Comments</a>
+                                {% endif %}
+                            </div>
+                        </div>
+                        {% else %}
+                        <p>You need to <a href="{% url 'login' %}">login</a> to comment.</p>
+                        {% endif %}
+                    </div>
+                </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- WebSocket connection for real-time updates -->
+    <script>
+        const socket = new WebSocket('ws://' + window.location.host + '/ws/blog/');
+
+        socket.onopen = function(event) {
+            console.log('WebSocket connection opened:', event);
+        };
+
+        socket.onmessage = function(event) {
+            console.log('Message received:', event.data);
+            const data = JSON.parse(event.data);
+
+            if (data.type === 'blog_post_update') {
+                // Handle post update
+                const postContainer = document.createElement('div');
+                postContainer.id = `post-${data.id}`;
+                postContainer.classList.add('jumbotron', 'jumbotron-fluid', 'jumbo-color');
+                postContainer.innerHTML = `
+                    <div class="container">
+                        <h3 class="display-6 font-weight-bold">${data.title}</h3>
+                        <p>${data.description}</p>
+                        <a href="#" class="toggle-comment-form" data-post-id="${data.id}">Add a Comment</a>
+                        <div id="comment-form-container-${data.id}" style="display: none;">
+                            <form id="comment-form-${data.id}" class="comment-form" data-post-id="${data.id}" data-user-id="${data.user_id}">
+                                <textarea name="content" rows="2" placeholder="Add a comment..."></textarea><br>
+                                <button type="submit">Add Comment</button>
+                            </form>
+                            <div id="comment-section-${data.id}">
+                                <!-- Comments will be dynamically added here -->
+                            </div>
+                        </div>
+                    </div>
+                `;
+                const postList = document.getElementById('post-list');
+                postList.prepend(postContainer);
+            }
+            else if (data.type === 'blog_post_edit') {
+                // Handle post update
+                const post = document.getElementById(`post-${data.id}`);
+                if (post) {
+                    post.querySelector('.display-6').innerText = data.title;
+                    post.querySelector('p').innerText = data.description;
+                }
+            }  
+            else if (data.type === 'blog_delete_post') {
+                // Handle post delete
+                const post = document.getElementById(`post-${data.id}`);
+                if (post) {
+                    post.remove();  // Remove post from the list
+                }
+            }
+            else if (data.type === 'new_comment') {
+                const commentSection = document.getElementById(`comment-section-${data.post_id}`);
+                if (commentSection) {
+                    const newComment = `
+                        <div class="comment">
+                            <strong>${data.user}</strong>: ${data.content}<br>
+                            <small>${data.timestamp}</small>
+                        </div>
+                    `;
+                    commentSection.innerHTML = newComment + commentSection.innerHTML; // Add new comment at the top
+
+                    // Update "Show All Comments" link if necessary
+                    const showAllLink = document.querySelector(`.show-all-comments[data-post-id="${data.post_id}"]`);
+                    if (showAllLink) {
+                        showAllLink.style.display = 'block';
+                    }
+                }
+
+            }
+            else if (data.type === 'notification') {
+            // Handle notifications
+            alert(data.message);  // Display notification as an alert
+        }
+        };
+
+        // Toggle comment form visibility
+        document.addEventListener('DOMContentLoaded', function () {
+            document.querySelectorAll('.toggle-comment-form').forEach(link => {
+                link.onclick = function(e) {
+                    e.preventDefault();
+                    const postId = link.getAttribute('data-post-id');
+                    const formContainer = document.getElementById(`comment-form-container-${postId}`);
+                    if (formContainer.style.display === 'none') {
+                        formContainer.style.display = 'block';
+                    } else {
+                        formContainer.style.display = 'none';
+                    }
+                };
+            });
+
+            const postElements = document.querySelectorAll('[data-post-id]');
+
+            postElements.forEach((postElement) => {
+                const postId = postElement.getAttribute('data-post-id');
+                const userId = postElement.getAttribute('data-user-id');
+                const commentForm = document.getElementById(`comment-form-${postId}`);
+
+                if (commentForm) {
+                    commentForm.onsubmit = function (e) {
+                        e.preventDefault();
+                        const commentContent = commentForm.querySelector('textarea').value;
+
+                        if (commentContent.trim()) {
+                            fetch('{% url "add_comment" %}', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+                                },
+                                body: JSON.stringify({
+                                    'content': commentContent,
+                                    'post_id': postId
+                                })
+                            }).then(response => response.json())
+                              .then(data => {
+                                socket.send(JSON.stringify({
+                                    'type': 'new_comment',
+                                    'content': commentContent,
+                                    'post_id': postId,
+                                    'user_id': userId
+                                }));
+
+                                // Clear the textarea after submission
+                                commentForm.querySelector('textarea').value = '';
+                            });
+                        }
+                    };
+                }
+            });
+
+            // Handle "Show All Comments" click
+            document.querySelectorAll('.show-all-comments').forEach(link => {
+                link.onclick = function(e) {
+                    e.preventDefault();
+                    const postId = link.getAttribute('data-post-id');
+                    const commentSection = document.getElementById(`comment-section-${postId}`);
+                    
+                    // Fetch all comments for this post
+                    fetch(`/comments/${postId}/`)
+                        .then(response => response.json())
+                        .then(data => {
+                            let commentsHtml = '';
+                            data.comments.forEach(comment => {
+                                commentsHtml += `
+                                    <div class="comment">
+                                        <strong>${comment.user}</strong>: ${comment.content}<br>
+                                        <small>${comment.timestamp}</small>
+                                    </div>
+                                `;
+                            });
+                            commentSection.innerHTML = commentsHtml;
+                        });
+                };
+            });
+        });
+
+        socket.onclose = function(event) {
+        console.error('WebSocket closed unexpectedly.');
+    };
+    </script>
+
+{% endblock content %}

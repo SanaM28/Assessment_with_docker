@@ -1,0 +1,16 @@
+services:
+  web:
+    build: .
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - .:/app  # Mounts the current directory to /app inside the container
+    ports:
+      - "8000:8000"  # Maps port 8000 of the container to port 8000 on your local machine
+    depends_on:
+      - redis  # Ensures Redis starts before the web service
+
+  redis:
+    image: redis:latest  # Uses the latest Redis image
+    ports:
+      - "6379:6379"   # Maps port 6379 of the container to port 6379 on your local machine
+
